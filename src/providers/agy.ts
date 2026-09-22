@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import * as https from "node:https";
+import { open } from "node:fs/promises";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
 import {
   currentUserProcessListArgs,
@@ -240,11 +241,12 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
     throw new AgyUnavailableError("agy CLI is not installed");
   }
 
+  const invocation = await agyCliQuotaInvocation(commandPath);
   let text: string;
   try {
     text = await runtime.execFileText(
-      commandPath,
-      ["-p", "/quota", "--output-format", "json"],
+      invocation.command,
+      invocation.args,
       CLI_QUOTA_TIMEOUT_MS,
       { env: agyCliQuotaEnvironment() },
     );
@@ -264,12 +266,34 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
   return summary;
 }
 
+async function agyCliQuotaInvocation(commandPath: string): Promise<{
+  command: string;
+  args: string[];
+}> {
+  const args = ["-p", "/quota", "--output-format", "json"];
+  if (!(await hasNodeEnvShebang(commandPath)))
+    return { command: commandPath, args };
+  return { command: process.execPath, args: [commandPath, ...args] };
+}
+
+async function hasNodeEnvShebang(commandPath: string): Promise<boolean> {
+  try {
+    const file = await open(commandPath, "r");
+    try {
+      const prefix = Buffer.alloc(128);
+      const { bytesRead } = await file.read(prefix, 0, prefix.length, 0);
+      return /^#![ \t]*\/usr\/bin\/env[ \t]+node[ \t]*(?:\r?\n|$)/.test(
+        prefix.toString("utf8", 0, bytesRead),
+      );
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 function agyCliQuotaEnvironment(): NodeJS.ProcessEnv {
-  // agy resolves the desktop opener (xdg-open on Linux, open on macOS) from
-  // PATH when a signed-out print-mode request enters interactive auth. The
-  // executable itself was already resolved above, so withholding command
-  // lookup keeps authenticated /quota reads intact while making that auth
-  // side effect impossible.
   return { ...process.env, PATH: process.execPath };
 }
 

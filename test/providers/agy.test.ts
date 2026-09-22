@@ -608,12 +608,17 @@ describe("Antigravity provider", () => {
     expect(loopbackCalled).toBe(false);
   });
 
-  it.skipIf(process.platform === "win32")(
-    "prevents a signed-out agy quota probe from invoking a browser opener",
-    async () => {
+  it.skipIf(process.platform === "win32").each([
+    "inherited PATH",
+    "working directory",
+  ] as const)(
+    "prevents a signed-out agy quota probe from invoking an opener in the %s",
+    async (openerLocation) => {
       const bin = join(tempDir as string, "bin");
+      const workingDirectory = join(tempDir as string, "working");
       const marker = join(tempDir as string, "browser-opened");
       mkdirSync(bin);
+      mkdirSync(workingDirectory);
       writeFileSync(
         join(bin, "agy"),
         `#!/bin/sh
@@ -621,16 +626,18 @@ xdg-open 'https://accounts.example.invalid/oauth'
 exit 1
 `,
       );
+      const openerDirectory =
+        openerLocation === "inherited PATH" ? bin : workingDirectory;
       writeFileSync(
-        join(bin, "xdg-open"),
+        join(openerDirectory, "xdg-open"),
         `#!/bin/sh
 printf opened > '${marker}'
 `,
       );
       chmodSync(join(bin, "agy"), 0o700);
-      chmodSync(join(bin, "xdg-open"), 0o700);
+      chmodSync(join(openerDirectory, "xdg-open"), 0o700);
       process.env.PATH = bin;
-      process.chdir(bin);
+      process.chdir(workingDirectory);
 
       const result = await fetchQuota({
         allowKeychainPrompt: false,
@@ -642,6 +649,37 @@ printf opened > '${marker}'
         error: "Antigravity CLI /quota failed",
       });
       expect(existsSync(marker)).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "runs an authenticated agy CLI with an env Node shebang",
+    async () => {
+      const bin = join(tempDir as string, "bin");
+      const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "agy"),
+        `#!/usr/bin/env node
+process.stdout.write(${JSON.stringify(payload)});
+`,
+      );
+      chmodSync(join(bin, "agy"), 0o700);
+      process.env.PATH = bin;
+
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state.status).toBe("fresh");
+      expect(result.source).toBe("cli");
+      expect(result.windows.map((window) => window.id)).toEqual([
+        "gemini_5h",
+        "gemini_weekly",
+        "claude_gpt_5h",
+        "claude_gpt_weekly",
+      ]);
     },
   );
 
