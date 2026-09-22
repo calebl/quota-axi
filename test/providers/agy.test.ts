@@ -657,11 +657,13 @@ printf opened > '${marker}'
     },
   );
 
-  it.skipIf(process.platform === "win32").each([
-    "#!/usr/bin/env node",
-    "#!/usr/bin/env -S node --enable-source-maps",
-    ...(existsSync("/bin/env") ? ["#!/bin/env node"] : []),
-  ])("runs an authenticated agy CLI with the %s shebang", async (shebang) => {
+  it
+    .skipIf(process.platform === "win32")
+    .each([
+      "#!/usr/bin/env node",
+      "#!/usr/bin/env -S node --enable-source-maps",
+      ...(existsSync("/bin/env") ? ["#!/bin/env node"] : []),
+    ])("runs an authenticated agy CLI with the %s shebang", async (shebang) => {
     const bin = join(tempDir as string, "bin");
     const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
     mkdirSync(bin);
