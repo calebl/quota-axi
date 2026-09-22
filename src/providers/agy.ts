@@ -310,7 +310,9 @@ async function createOpenerGuard(): Promise<{
       },
     };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
     throw error;
   }
 }
