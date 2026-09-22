@@ -1,5 +1,12 @@
-import { readFileSync } from "node:fs";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -9,9 +16,13 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { currentUserProcessListArgs } from "../../src/lib/process.js";
+import {
+  currentUserProcessListArgs,
+  type ExecFileTextOptions,
+} from "../../src/lib/process.js";
 import { readCachedProvider, writeCachedProviders } from "../../src/cache.js";
 import {
+  fetchQuota,
   fetchQuotaWithRuntime,
   inspectAuthWithRuntime,
   normalizeAgyPrintUsage,
@@ -27,6 +38,7 @@ import { withQuotaSemantics } from "../../src/interpretation.js";
 import type { ProviderQuota } from "../../src/types.js";
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalPath = process.env.PATH;
 let tempDir: string | undefined;
 const servers: ReturnType<typeof createServer>[] = [];
 
@@ -45,6 +57,8 @@ afterEach(async () => {
   );
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  if (originalPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalPath;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
 });
@@ -547,6 +561,7 @@ describe("Antigravity provider", () => {
       command: string;
       args: string[];
       timeoutMs: number;
+      path?: string;
     }> = [];
     let loopbackCalled = false;
     const port = await startServer((response) => {
@@ -562,8 +577,13 @@ describe("Antigravity provider", () => {
         agyPath: "/Users/test/.local/bin/agy",
         agyOutput: JSON.stringify(fixture("usage-print-v1.2.2.json")),
         requestJson: requestLoopbackJson,
-        onExec(command, args, timeoutMs) {
-          commands.push({ command, args, timeoutMs });
+        onExec(command, args, timeoutMs, options) {
+          commands.push({
+            command,
+            args,
+            timeoutMs,
+            path: options?.env?.PATH,
+          });
         },
       }),
     );
@@ -581,9 +601,46 @@ describe("Antigravity provider", () => {
       command: "/Users/test/.local/bin/agy",
       args: ["-p", "/quota", "--output-format", "json"],
       timeoutMs: 15_000,
+      path: "",
     });
     expect(loopbackCalled).toBe(false);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "prevents a signed-out agy quota probe from invoking a browser opener",
+    async () => {
+      const bin = join(tempDir as string, "bin");
+      const marker = join(tempDir as string, "browser-opened");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "agy"),
+        `#!/bin/sh
+xdg-open 'https://accounts.example.invalid/oauth'
+exit 1
+`,
+      );
+      writeFileSync(
+        join(bin, "xdg-open"),
+        `#!/bin/sh
+printf opened > '${marker}'
+`,
+      );
+      chmodSync(join(bin, "agy"), 0o700);
+      chmodSync(join(bin, "xdg-open"), 0o700);
+      process.env.PATH = bin;
+
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state).toMatchObject({
+        status: "error",
+        error: "Antigravity CLI /quota failed",
+      });
+      expect(existsSync(marker)).toBe(false);
+    },
+  );
 
   it("does not serve stale quota when protected loopback and print usage fail", async () => {
     writeCachedProviders([cachedAgyQuota()]);
@@ -877,7 +934,12 @@ function runtimeWith(options: {
   cliQuota?: string | Error;
   requestJson?: AgyProbeRuntime["requestJson"];
   responses?: Record<string, unknown>;
-  onExec?: (command: string, args: string[], timeoutMs: number) => void;
+  onExec?: (
+    command: string,
+    args: string[],
+    timeoutMs: number,
+    options?: ExecFileTextOptions,
+  ) => void;
   onRequest?: (endpoint: AgyConnectionEndpoint, path: string) => void;
 }): AgyProbeRuntime {
   return {
@@ -887,8 +949,8 @@ function runtimeWith(options: {
         options.agyPath ?? (options.cliQuota !== undefined ? "agy" : undefined)
       );
     },
-    async execFileText(command, args, timeoutMs) {
-      options.onExec?.(command, args, timeoutMs);
+    async execFileText(command, args, timeoutMs, execOptions) {
+      options.onExec?.(command, args, timeoutMs, execOptions);
       if (command === "ps") {
         if (options.psError) throw options.psError;
         return options.ps ?? "";
