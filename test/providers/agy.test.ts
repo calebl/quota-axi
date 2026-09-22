@@ -39,6 +39,7 @@ import type { ProviderQuota } from "../../src/types.js";
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalPath = process.env.PATH;
+const originalWorkingDirectory = process.cwd();
 let tempDir: string | undefined;
 const servers: ReturnType<typeof createServer>[] = [];
 
@@ -59,6 +60,7 @@ afterEach(async () => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalPath === undefined) delete process.env.PATH;
   else process.env.PATH = originalPath;
+  process.chdir(originalWorkingDirectory);
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
 });
@@ -601,7 +603,7 @@ describe("Antigravity provider", () => {
       command: "/Users/test/.local/bin/agy",
       args: ["-p", "/quota", "--output-format", "json"],
       timeoutMs: 15_000,
-      path: "",
+      path: process.execPath,
     });
     expect(loopbackCalled).toBe(false);
   });
@@ -628,6 +630,7 @@ printf opened > '${marker}'
       chmodSync(join(bin, "agy"), 0o700);
       chmodSync(join(bin, "xdg-open"), 0o700);
       process.env.PATH = bin;
+      process.chdir(bin);
 
       const result = await fetchQuota({
         allowKeychainPrompt: false,

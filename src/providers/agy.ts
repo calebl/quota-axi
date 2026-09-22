@@ -270,7 +270,7 @@ function agyCliQuotaEnvironment(): NodeJS.ProcessEnv {
   // executable itself was already resolved above, so withholding command
   // lookup keeps authenticated /quota reads intact while making that auth
   // side effect impossible.
-  return { ...process.env, PATH: "" };
+  return { ...process.env, PATH: process.execPath };
 }
 
 function isMissingCommandError(error: unknown): boolean {
