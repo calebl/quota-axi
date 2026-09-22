@@ -1,7 +1,11 @@
 import * as http from "node:http";
 import * as https from "node:https";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
-import { currentUserProcessListArgs, execFileText } from "../lib/process.js";
+import {
+  currentUserProcessListArgs,
+  execFileText,
+  type ExecFileTextOptions,
+} from "../lib/process.js";
 import {
   clampPercent,
   nowIso,
@@ -67,6 +71,7 @@ export type AgyProbeRuntime = {
     command: string,
     args: string[],
     timeoutMs: number,
+    options?: ExecFileTextOptions,
   ): Promise<string>;
   requestJson(
     endpoint: AgyConnectionEndpoint,
@@ -241,6 +246,7 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
       commandPath,
       ["-p", "/quota", "--output-format", "json"],
       CLI_QUOTA_TIMEOUT_MS,
+      { env: agyCliQuotaEnvironment() },
     );
   } catch (error) {
     throw sanitizeCliError(error);
@@ -256,6 +262,15 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
     throw new AgyMalformedResponseError("agy /quota quota summary malformed");
   }
   return summary;
+}
+
+function agyCliQuotaEnvironment(): NodeJS.ProcessEnv {
+  // agy resolves the desktop opener (xdg-open on Linux, open on macOS) from
+  // PATH when a signed-out print-mode request enters interactive auth. The
+  // executable itself was already resolved above, so withholding command
+  // lookup keeps authenticated /quota reads intact while making that auth
+  // side effect impossible.
+  return { ...process.env, PATH: "" };
 }
 
 function isMissingCommandError(error: unknown): boolean {
