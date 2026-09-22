@@ -1,6 +1,8 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as http from "node:http";
 import * as https from "node:https";
-import { open } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
 import {
   currentUserProcessListArgs,
@@ -241,17 +243,20 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
     throw new AgyUnavailableError("agy CLI is not installed");
   }
 
-  const invocation = await agyCliQuotaInvocation(commandPath);
   let text: string;
+  let openerGuard: Awaited<ReturnType<typeof createOpenerGuard>> | undefined;
   try {
+    openerGuard = await createOpenerGuard();
     text = await runtime.execFileText(
-      invocation.command,
-      invocation.args,
+      commandPath,
+      ["-p", "/quota", "--output-format", "json"],
       CLI_QUOTA_TIMEOUT_MS,
-      { env: agyCliQuotaEnvironment() },
+      { env: openerGuard.env },
     );
   } catch (error) {
     throw sanitizeCliError(error);
+  } finally {
+    await openerGuard?.dispose();
   }
   let parsed: unknown;
   try {
@@ -266,35 +271,48 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
   return summary;
 }
 
-async function agyCliQuotaInvocation(commandPath: string): Promise<{
-  command: string;
-  args: string[];
+async function createOpenerGuard(): Promise<{
+  env: NodeJS.ProcessEnv;
+  dispose(): Promise<void>;
 }> {
-  const args = ["-p", "/quota", "--output-format", "json"];
-  if (!(await hasNodeEnvShebang(commandPath)))
-    return { command: commandPath, args };
-  return { command: process.execPath, args: [commandPath, ...args] };
-}
-
-async function hasNodeEnvShebang(commandPath: string): Promise<boolean> {
+  const directory = await mkdtemp(join(tmpdir(), "quota-axi-agy-"));
   try {
-    const file = await open(commandPath, "r");
-    try {
-      const prefix = Buffer.alloc(128);
-      const { bytesRead } = await file.read(prefix, 0, prefix.length, 0);
-      return /^#![ \t]*\/(?:usr\/)?bin\/env[ \t]+(?:-S[ \t]+)?node[ \t]*(?:\r?\n|$)/.test(
-        prefix.toString("utf8", 0, bytesRead),
+    if (process.platform === "win32") {
+      await Promise.all(
+        ["xdg-open.cmd", "open.cmd"].map((name) =>
+          writeFile(join(directory, name), "@exit /b 1\r\n"),
+        ),
       );
-    } finally {
-      await file.close();
+    } else {
+      await Promise.all(
+        ["xdg-open", "open"].map((name) =>
+          writeFile(join(directory, name), "#!/bin/sh\nexit 1\n", {
+            mode: 0o700,
+          }),
+        ),
+      );
     }
-  } catch {
-    return false;
+    const inheritedPath = process.env.PATH;
+    return {
+      env: {
+        ...process.env,
+        ...(process.platform === "win32"
+          ? { NoDefaultCurrentDirectoryInExePath: "1" }
+          : {}),
+        PATH: inheritedPath
+          ? `${directory}${delimiter}${inheritedPath}`
+          : directory,
+      },
+      async dispose() {
+        await rm(directory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      },
+    };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
-}
-
-function agyCliQuotaEnvironment(): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: process.execPath };
 }
 
 function isMissingCommandError(error: unknown): boolean {

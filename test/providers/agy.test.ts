@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -14,7 +15,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentUserProcessListArgs,
@@ -599,21 +600,25 @@ describe("Antigravity provider", () => {
       "claude_gpt_5h",
       "claude_gpt_weekly",
     ]);
-    expect(commands.at(-1)).toEqual({
+    expect(commands.at(-1)).toMatchObject({
       command: "/Users/test/.local/bin/agy",
       args: ["-p", "/quota", "--output-format", "json"],
       timeoutMs: 15_000,
-      path: process.execPath,
     });
+    expect(
+      commands.at(-1)?.path?.split(delimiter).slice(1).join(delimiter),
+    ).toBe(process.env.PATH ?? "");
     expect(loopbackCalled).toBe(false);
   });
 
   it.skipIf(process.platform === "win32").each([
-    "inherited PATH",
-    "working directory",
+    ["xdg-open", "inherited PATH"],
+    ["xdg-open", "working directory"],
+    ["open", "inherited PATH"],
+    ["open", "working directory"],
   ] as const)(
-    "prevents a signed-out agy quota probe from invoking an opener in the %s",
-    async (openerLocation) => {
+    "prevents a signed-out agy quota probe from invoking %s in the %s",
+    async (opener, openerLocation) => {
       const bin = join(tempDir as string, "bin");
       const workingDirectory = join(tempDir as string, "working");
       const marker = join(tempDir as string, "browser-opened");
@@ -622,20 +627,20 @@ describe("Antigravity provider", () => {
       writeFileSync(
         join(bin, "agy"),
         `#!/bin/sh
-xdg-open 'https://accounts.example.invalid/oauth'
+${opener} 'https://accounts.example.invalid/oauth'
 exit 1
 `,
       );
       const openerDirectory =
         openerLocation === "inherited PATH" ? bin : workingDirectory;
       writeFileSync(
-        join(openerDirectory, "xdg-open"),
+        join(openerDirectory, opener),
         `#!/bin/sh
 printf opened > '${marker}'
 `,
       );
       chmodSync(join(bin, "agy"), 0o700);
-      chmodSync(join(openerDirectory, "xdg-open"), 0o700);
+      chmodSync(join(openerDirectory, opener), 0o700);
       process.env.PATH = bin;
       process.chdir(workingDirectory);
 
@@ -654,8 +659,8 @@ printf opened > '${marker}'
 
   it.skipIf(process.platform === "win32").each([
     "#!/usr/bin/env node",
-    "#!/usr/bin/env -S node",
-    "#!/bin/env node",
+    "#!/usr/bin/env -S node --enable-source-maps",
+    ...(existsSync("/bin/env") ? ["#!/bin/env node"] : []),
   ])("runs an authenticated agy CLI with the %s shebang", async (shebang) => {
     const bin = join(tempDir as string, "bin");
     const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
@@ -667,6 +672,7 @@ process.stdout.write(${JSON.stringify(payload)});
 `,
     );
     chmodSync(join(bin, "agy"), 0o700);
+    symlinkSync(process.execPath, join(bin, "node"));
     process.env.PATH = bin;
 
     const result = await fetchQuota({
@@ -683,6 +689,38 @@ process.stdout.write(${JSON.stringify(payload)});
       "claude_gpt_weekly",
     ]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves runtime lookup in an authenticated shell launcher",
+    async () => {
+      const bin = join(tempDir as string, "bin");
+      const script = join(bin, "agy-cli.js");
+      const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "agy"),
+        `#!/bin/sh
+exec node "$0-cli.js" "$@"
+`,
+      );
+      writeFileSync(
+        script,
+        `process.stdout.write(${JSON.stringify(payload)});
+`,
+      );
+      chmodSync(join(bin, "agy"), 0o700);
+      symlinkSync(process.execPath, join(bin, "node"));
+      process.env.PATH = bin;
+
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state.status).toBe("fresh");
+      expect(result.source).toBe("cli");
+    },
+  );
 
   it("does not serve stale quota when protected loopback and print usage fail", async () => {
     writeCachedProviders([cachedAgyQuota()]);
