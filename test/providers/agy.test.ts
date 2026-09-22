@@ -652,36 +652,37 @@ printf opened > '${marker}'
     },
   );
 
-  it.skipIf(process.platform === "win32")(
-    "runs an authenticated agy CLI with an env Node shebang",
-    async () => {
-      const bin = join(tempDir as string, "bin");
-      const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
-      mkdirSync(bin);
-      writeFileSync(
-        join(bin, "agy"),
-        `#!/usr/bin/env node
+  it.skipIf(process.platform === "win32").each([
+    "#!/usr/bin/env node",
+    "#!/usr/bin/env -S node",
+    "#!/bin/env node",
+  ])("runs an authenticated agy CLI with the %s shebang", async (shebang) => {
+    const bin = join(tempDir as string, "bin");
+    const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "agy"),
+      `${shebang}
 process.stdout.write(${JSON.stringify(payload)});
 `,
-      );
-      chmodSync(join(bin, "agy"), 0o700);
-      process.env.PATH = bin;
+    );
+    chmodSync(join(bin, "agy"), 0o700);
+    process.env.PATH = bin;
 
-      const result = await fetchQuota({
-        allowKeychainPrompt: false,
-        refreshCredentials: false,
-      });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
-      expect(result.state.status).toBe("fresh");
-      expect(result.source).toBe("cli");
-      expect(result.windows.map((window) => window.id)).toEqual([
-        "gemini_5h",
-        "gemini_weekly",
-        "claude_gpt_5h",
-        "claude_gpt_weekly",
-      ]);
-    },
-  );
+    expect(result.state.status).toBe("fresh");
+    expect(result.source).toBe("cli");
+    expect(result.windows.map((window) => window.id)).toEqual([
+      "gemini_5h",
+      "gemini_weekly",
+      "claude_gpt_5h",
+      "claude_gpt_weekly",
+    ]);
+  });
 
   it("does not serve stale quota when protected loopback and print usage fail", async () => {
     writeCachedProviders([cachedAgyQuota()]);
