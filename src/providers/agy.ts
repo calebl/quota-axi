@@ -282,7 +282,7 @@ async function hasNodeEnvShebang(commandPath: string): Promise<boolean> {
     try {
       const prefix = Buffer.alloc(128);
       const { bytesRead } = await file.read(prefix, 0, prefix.length, 0);
-      return /^#![ \t]*\/usr\/bin\/env[ \t]+node[ \t]*(?:\r?\n|$)/.test(
+      return /^#![ \t]*\/(?:usr\/)?bin\/env[ \t]+(?:-S[ \t]+)?node[ \t]*(?:\r?\n|$)/.test(
         prefix.toString("utf8", 0, bytesRead),
       );
     } finally {
