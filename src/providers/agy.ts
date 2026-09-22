@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import * as http from "node:http";
 import * as https from "node:https";
 import { tmpdir } from "node:os";
@@ -284,13 +284,14 @@ async function createOpenerGuard(): Promise<{
         ),
       );
     } else {
-      await Promise.all(
-        ["xdg-open", "open"].map((name) =>
+      await Promise.all([
+        ...["xdg-open", "open"].map((name) =>
           writeFile(join(directory, name), "#!/bin/sh\nexit 1\n", {
             mode: 0o700,
           }),
         ),
-      );
+        symlink(process.execPath, join(directory, "node")),
+      ]);
     }
     const inheritedPath = process.env.PATH;
     return {

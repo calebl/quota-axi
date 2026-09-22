@@ -5,7 +5,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -663,34 +662,36 @@ printf opened > '${marker}'
       "#!/usr/bin/env node",
       "#!/usr/bin/env -S node --enable-source-maps",
       ...(existsSync("/bin/env") ? ["#!/bin/env node"] : []),
-    ])("runs an authenticated agy CLI with the %s shebang", async (shebang) => {
-    const bin = join(tempDir as string, "bin");
-    const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
-    mkdirSync(bin);
-    writeFileSync(
-      join(bin, "agy"),
-      `${shebang}
+    ])(
+    "runs an authenticated agy CLI with the %s shebang when PATH has no node",
+    async (shebang) => {
+      const bin = join(tempDir as string, "bin");
+      const payload = JSON.stringify(fixture("usage-print-v1.2.2.json"));
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "agy"),
+        `${shebang}
 process.stdout.write(${JSON.stringify(payload)});
 `,
-    );
-    chmodSync(join(bin, "agy"), 0o700);
-    symlinkSync(process.execPath, join(bin, "node"));
-    process.env.PATH = bin;
+      );
+      chmodSync(join(bin, "agy"), 0o700);
+      process.env.PATH = bin;
 
-    const result = await fetchQuota({
-      allowKeychainPrompt: false,
-      refreshCredentials: false,
-    });
+      const result = await fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
 
-    expect(result.state.status).toBe("fresh");
-    expect(result.source).toBe("cli");
-    expect(result.windows.map((window) => window.id)).toEqual([
-      "gemini_5h",
-      "gemini_weekly",
-      "claude_gpt_5h",
-      "claude_gpt_weekly",
-    ]);
-  });
+      expect(result.state.status).toBe("fresh");
+      expect(result.source).toBe("cli");
+      expect(result.windows.map((window) => window.id)).toEqual([
+        "gemini_5h",
+        "gemini_weekly",
+        "claude_gpt_5h",
+        "claude_gpt_weekly",
+      ]);
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "preserves runtime lookup in an authenticated shell launcher",
@@ -711,7 +712,6 @@ exec node "$0-cli.js" "$@"
 `,
       );
       chmodSync(join(bin, "agy"), 0o700);
-      symlinkSync(process.execPath, join(bin, "node"));
       process.env.PATH = bin;
 
       const result = await fetchQuota({
